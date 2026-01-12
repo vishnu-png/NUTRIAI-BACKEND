@@ -27,7 +27,7 @@ while($row = mysqli_fetch_assoc($meal_query)){
     $meals[] = $row;
 }
 
-// Summary
+// Average Health
 $summary_query = mysqli_query($conn, 
     "SELECT 
         SUM(calories) as total_calories,
@@ -37,14 +37,26 @@ $summary_query = mysqli_query($conn,
     FROM meals
     WHERE user_id='$user_id'"
 );
-
 $summary = mysqli_fetch_assoc($summary_query);
+
+// Fetch Health Records
+$bmi_q = $conn->query("SELECT * FROM user_bmi_records WHERE user_id='$user_id'");
+$bmi_records = [];
+while($r = $bmi_q->fetch_assoc()) $bmi_records[] = $r;
+
+$def_q = $conn->query("SELECT * FROM user_deficiency_reports WHERE user_id='$user_id'");
+$def_reports = [];
+while($r = $def_q->fetch_assoc()) $def_reports[] = $r;
 
 // FINAL OUTPUT
 $response = [
     "user_profile" => $user_data,
     "meals" => $meals,
+    "bmi_history" => $bmi_records,
+    "deficiency_reports" => $def_reports,
     "summary" => $summary,
+    "backup_date" => date("Y-m-d H:i:s")
+];
     "backup_date" => date("Y-m-d H:i:s")
 ];
 

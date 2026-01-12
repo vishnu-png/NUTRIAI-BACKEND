@@ -1,6 +1,11 @@
 <?php
 include 'config.php';
 
+if (!isset($_POST['email']) || !isset($_POST['password'])) {
+    echo json_encode(["status" => "failed", "message" => "Missing email or password"]);
+    exit();
+}
+
 $email = $_POST['email'];
 $password = $_POST['password'];
 
@@ -15,7 +20,9 @@ if(mysqli_num_rows($result) > 0){
             "status" => "success",
             "user_id" => $user['id'],
             "name" => $user['name'],
-            "email" => $user['email']
+            "email" => $user['email'],
+            "target_calories" => $user['target_calories'] ?? 2000,
+            "diet_preference" => $user['diet_preference'] ?? 'Non-Veg'
         ]);
     }else{
         echo json_encode([
