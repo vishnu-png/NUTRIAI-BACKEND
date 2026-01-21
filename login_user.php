@@ -9,11 +9,14 @@ if (!isset($_POST['email']) || !isset($_POST['password'])) {
 $email = $_POST['email'];
 $password = $_POST['password'];
 
-$query = "SELECT * FROM users WHERE email='$email'";
-$result = mysqli_query($conn, $query);
+// Use Prepared Statement to prevent SQL Injection
+$stmt = $conn->prepare("SELECT * FROM users WHERE email=?");
+$stmt->bind_param("s", $email);
+$stmt->execute();
+$result = $stmt->get_result();
 
-if(mysqli_num_rows($result) > 0){
-    $user = mysqli_fetch_assoc($result);
+if($result->num_rows > 0){
+    $user = $result->fetch_assoc();
 
     if(password_verify($password, $user['password'])){
         echo json_encode([
@@ -36,4 +39,5 @@ if(mysqli_num_rows($result) > 0){
         "message" => "User not found"
     ]);
 }
+$stmt->close();
 ?>

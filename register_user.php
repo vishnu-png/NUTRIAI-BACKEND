@@ -54,13 +54,13 @@ if($_SERVER['REQUEST_METHOD'] == 'POST'){
              $conn->query($bmi_sql);
         }
 
-        echo "User Registered Successfully";
+        echo json_encode(["status" => "success", "message" => "User Registered Successfully"]);
     }else{
-        echo "Registration Failed: " . $conn->error;
+        echo json_encode(["status" => "failed", "message" => "Registration Failed: " . $conn->error]);
     }
     $stmt->close();
 
 }else{
-    echo "Invalid Request Method";
+    echo json_encode(["status" => "failed", "message" => "Invalid Request Method"]);
 }
 ?>
