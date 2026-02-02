@@ -9,7 +9,7 @@ if(empty($user_id)){
 }
 
 $stmt = $conn->prepare("DELETE FROM meals WHERE user_id = ? AND date = CURDATE()");
-$stmt->bind_param("i", $user_id);
+$stmt->bind_param("s", $user_id);
 
 if($stmt->execute()){
     echo json_encode(["status"=>"success", "message"=>"Cleared today's meals"]);

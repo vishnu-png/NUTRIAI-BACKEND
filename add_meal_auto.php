@@ -1,8 +1,9 @@
 <?php
 include 'config.php';
 
+
 if ($_SERVER['REQUEST_METHOD'] != 'POST') {
-    echo "Invalid Request Method";
+    echo json_encode(["status" => "error", "message" => "Invalid Request Method"]);
     exit;
 }
 
@@ -11,16 +12,20 @@ $food_id = $_POST['food_id'] ?? '';
 $meal_type = $_POST['meal_type'] ?? '';
 
 if (empty($user_id) || empty($food_id) || empty($meal_type)) {
-    echo "Missing Fields";
+    echo json_encode(["status" => "error", "message" => "Missing Fields: user_id, food_id, or meal_type"]);
     exit;
 }
 
 // Fetch food details from database
-$food_query = mysqli_query($conn, "SELECT * FROM foods WHERE id='$food_id'");
-$food = mysqli_fetch_assoc($food_query);
+$stmt = $conn->prepare("SELECT * FROM foods WHERE id = ?");
+$stmt->bind_param("s", $food_id); // Use 's' for flexibility
+$stmt->execute();
+$result = $stmt->get_result();
+$food = $result->fetch_assoc();
+$stmt->close();
 
 if (!$food) {
-    echo "Food Not Found";
+    echo json_encode(["status" => "error", "message" => "Food Not Found"]);
     exit;
 }
 
@@ -33,14 +38,15 @@ $calcium = $food['calcium'];
 $date = date("Y-m-d");
 
 // Insert into meals table
-$insert = "
-    INSERT INTO meals (user_id, meal_type, food_name, calories, protein, iron, calcium, date)
-    VALUES ('$user_id', '$meal_type', '$food_name', '$calories', '$protein', '$iron', '$calcium', '$date')
-";
+$insert_stmt = $conn->prepare("INSERT INTO meals (user_id, meal_type, food_name, calories, protein, iron, calcium, date, is_eaten) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)");
+$insert_stmt->bind_param("sssdddds", $user_id, $meal_type, $food_name, $calories, $protein, $iron, $calcium, $date);
 
-if (mysqli_query($conn, $insert)) {
-    echo "Meal Added Automatically";
+if ($insert_stmt->execute()) {
+    echo json_encode(["status" => "success", "message" => "Meal Added Automatically", "meal_id" => $conn->insert_id]);
 } else {
-    echo "Error Adding Meal";
+    echo json_encode(["status" => "error", "message" => "Error Adding Meal: " . $conn->error]);
 }
+$insert_stmt->close();
+$conn->close();
+
 ?>

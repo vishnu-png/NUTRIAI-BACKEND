@@ -61,33 +61,37 @@ if ($pref == 'veg') {
     $where_clause = "1=1"; 
 }
 
+
+// ... previous code ...
 $all_foods = [];
 $query = "SELECT * FROM foods WHERE $where_clause";
 $r = $conn->query($query);
 if ($r) {
     while ($row = $r->fetch_assoc()) { $all_foods[] = $row; }
 }
-$used_food_names = [];
-$current_total_cals = 0;
-$current_total_pro = 0; // Fix: Initialize variable
-$inserted_count = 0;
 
-// Remove the dangerous fallback that loaded ALL foods if filtered list was empty.
-// If filtered list is empty, we must NOT show forbidden foods. 
-// We should rather exit or fail gracefully, or relax ONLY the keyword filters but keep the category filter.
-if (empty($all_foods)) {
-    // Try relaxed query: Only check major Categories for Veg, ignore complex name checks
+// Validation: No Foods
+if (count($all_foods) == 0) {
+    // Try relaxed fallback if Veg
     if ($pref == 'veg') {
          $query = "SELECT * FROM foods WHERE LOWER(category) NOT LIKE '%non%' AND LOWER(category) NOT LIKE '%egg%'";
          $r = $conn->query($query);
          while ($row = $r->fetch_assoc()) { $all_foods[] = $row; }
-    } else {
-         // If Non-Veg and empty?? Just load all.
-         $query = "SELECT * FROM foods";
-         $r = $conn->query($query);
-         while ($row = $r->fetch_assoc()) { $all_foods[] = $row; }
+    }
+    
+    // Final check
+    if (count($all_foods) == 0) {
+        $check_total = $conn->query("SELECT COUNT(*) as c FROM foods")->fetch_assoc()['c'];
+        $msg = ($check_total == 0) ? "No foods in database. Please import nutriai.sql" : "No suitable foods found for preference: $pref";
+        echo json_encode(["status" => "failed", "message" => $msg]);
+        exit;
     }
 }
+
+$used_food_names = [];
+$current_total_cals = 0;
+$current_total_pro = 0; 
+$inserted_count = 0;
 
 $meal_slots = [
     ['type' => 'breakfast', 'ratio' => 0.25],
@@ -99,33 +103,26 @@ $meal_slots = [
 $log = [];
 
 foreach ($meal_slots as $index => $slot) {
+    // ... (rest of logic same until selection) ...
     $type = $slot['type'];
-    $is_last = ($index === count($meal_slots) - 1);
+    
+    // ... selection logic ...
+    // Copy existing loop internal logic but Ensure $all_foods is not empty which we did above.
     
     // CUMULATIVE TARGETING
-    // We want the total at the end of this meal to be: DailyTarget * Sum(Ratios)
     $cumulative_ratio = 0;
     for($i=0; $i<=$index; $i++) $cumulative_ratio += $meal_slots[$i]['ratio'];
     
     $cumulative_target = $target_cal_daily * $cumulative_ratio;
-    
-    // The specific target for THIS meal is the gap between where we should be and where we are
     $slot_target_cal = $cumulative_target - $current_total_cals;
-    
-    // Safety
     if ($slot_target_cal < 50) $slot_target_cal = 50;
 
-    // MACRO AWARENESS: What ratio do we need?
-    // User wants >90% accuracy on ALL nutrients.
-    // If we are short on Protein, we MUST pick a high protein food.
-    // Calculate required density for this slot to catch up
-    $cum_pro_target_now = ($target_cal_daily * 0.20 / 4) * $cumulative_ratio; // Expected Pro by now
-    $pro_needed = $cum_pro_target_now - $current_total_pro; // Approx Pro gap
+    $cum_pro_target_now = ($target_cal_daily * 0.20 / 4) * $cumulative_ratio;
+    $pro_needed = $cum_pro_target_now - $current_total_pro;
     if ($pro_needed < 1) $pro_needed = 1;
 
-    $req_pro_ratio = $pro_needed / $slot_target_cal; // e.g., 0.1 means 10g Pro per 100 Cal
-    
-    // Filter candidates based on this ratio
+    $req_pro_ratio = $pro_needed / $slot_target_cal;
+
     $best_candidates = [];
     shuffle($all_foods);
 
@@ -134,20 +131,13 @@ foreach ($meal_slots as $index => $slot) {
         if (in_array($food['food_name'], $used_food_names)) continue;
         if ($food['calories'] < 10) continue;
 
-        // Check Protein Density
         $this_pro_ratio = $food['protein'] / ($food['calories'] ?: 1);
-        
-        // If we really need protein ($req_pro_ratio > 0.05), discard foods that are too weak
-        // But be lenient if we are just starting or ratio is low
-        if ($req_pro_ratio > 0.05 && $this_pro_ratio < ($req_pro_ratio * 0.7)) {
-            continue; // Skip this low protein food, it will blow up calories before hitting protein
-        }
+        if ($req_pro_ratio > 0.05 && $this_pro_ratio < ($req_pro_ratio * 0.7)) continue;
 
         $best_candidates[] = $food;
-        if (count($best_candidates) > 5) break; // Found enough good options
+        if (count($best_candidates) > 5) break;
     }
 
-    // Fallback: If strict filter killed everyone, just pick random valid
     if (empty($best_candidates)) {
          foreach ($all_foods as $food) {
             if (!isTimeSuitable($food['food_name'], $type)) continue;
@@ -157,26 +147,30 @@ foreach ($meal_slots as $index => $slot) {
          }
     }
     
-    // If STILL empty (no foods suitable for time?), pick purely random
-    if (empty($best_candidates)) {
-        $selected_food = $all_foods[array_rand($all_foods)];
-    } else {
+    // Safe Random Pick
+    $selected_food = null;
+    if (!empty($best_candidates)) {
         $selected_food = $best_candidates[array_rand($best_candidates)];
+    } else {
+        // Last resort: Any random food
+        if (!empty($all_foods)) {
+            $selected_food = $all_foods[array_rand($all_foods)];
+        }
     }
 
+    if (!$selected_food) continue; // Skip slot if absolutely nothing found
+
     // SCALE IT
-    // Ratio = Needed / Base
     $base_cal = $selected_food['calories'];
-    if ($base_cal <= 0) $base_cal = 50; // Prevention
+    if ($base_cal <= 0) $base_cal = 50; 
 
     $ratio = $slot_target_cal / $base_cal;
     
-    $new_cal = $slot_target_cal; // Forced Exact
+    $new_cal = $slot_target_cal; 
     $new_pro = ($selected_food['protein'] ?? 0) * $ratio;
     $new_carb = ($selected_food['carbs'] ?? 0) * $ratio;
     $new_fat = ($selected_food['fat'] ?? 0) * $ratio;
     
-    // Generate Name with Portion hint
     $portion_desc = "";
     if ($ratio > 1.2) $portion_desc = " (Lg)";
     if ($ratio > 2.0) $portion_desc = " (x".round($ratio, 1).")";
@@ -184,22 +178,28 @@ foreach ($meal_slots as $index => $slot) {
     
     $final_name = $selected_food['food_name'] . $portion_desc;
 
-    // Insert
+    // Insert - Use 's' for user_id to be safe
     $ins = $conn->prepare("INSERT INTO meals (user_id, food_name, calories, protein, carbs, fat, meal_type, date, is_eaten) VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), 0)");
     
-    $ins->bind_param("isdddds", $user_id, $final_name, $new_cal, $new_pro, $new_carb, $new_fat, $type);
+    // Bind 's' for user_id to match string/int flexibility
+    $ins->bind_param("ssdddds", $user_id, $final_name, $new_cal, $new_pro, $new_carb, $new_fat, $type);
     if ($ins->execute()) {
         $inserted_count++;
         $current_total_cals += $new_cal;
         $current_total_pro += $new_pro;
-        $used_food_names[] = $selected_food['food_name']; // Base name
+        $used_food_names[] = $selected_food['food_name'];
         $log[] = "$type: $final_name ($new_cal)";
     }
     $ins->close();
 }
 
-$response_msg = "Generated $inserted_count meals. Target: $target_cal_daily. Achieved: ".round($current_total_cals);
-echo json_encode(["status" => "success", "message" => $response_msg]);
+if ($inserted_count == 0) {
+    echo json_encode(["status" => "failed", "message" => "Could not generate any meals. Logic found no suitable candidates."]);
+} else {
+    $response_msg = "Generated $inserted_count meals. Target: $target_cal_daily. Achieved: ".round($current_total_cals);
+    echo json_encode(["status" => "success", "message" => $response_msg]);
+}
 
 $conn->close();
+
 ?>
